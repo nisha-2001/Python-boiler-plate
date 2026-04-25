@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+env/
+*.env
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# Temporary files
+*.tmp
+
+# IDE or code editor-specific files
+.vscode/
+.idea/
+*.sublime-*
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# Compiled files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Build and distribution directories
+build/
+dist/
+__dist__/
+bin/
+
+# Package files
+*.egg-info/
+*.egg/
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+*.gz
+*.whl
+
+# Configuration files
+*.cfg
+*.ini
+*.conf
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Coverage File
+.coverage

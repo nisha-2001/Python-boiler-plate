@@ -1,0 +1,6 @@
+[run]
+omit =
+    src/utils/*
+    src/commons/*
+    src/config_service/*
+    src/resources/*

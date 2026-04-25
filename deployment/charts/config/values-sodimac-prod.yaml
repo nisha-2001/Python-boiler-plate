@@ -1,0 +1,49 @@
+replicaCount: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 15
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+
+image:
+  repository: registry.falabella.tech/digital-retail/catalyst/osmos/relevancy/query-ranking-api
+
+ingress:
+  enabled: true
+  hosts:
+    - "*"
+
+egress:
+  enabled: true
+  hosts:
+    - "*.googleapis.com"
+
+resources:
+  requests:
+    cpu: "900m"
+    memory: "3Gi"
+  limits:
+    memory: "4Gi"
+
+environmentVariables:
+  DD_ENV: "prod"
+  DD_SERVICE: "so-prod-query-ranking-api"
+  DD_LOGS_INJECTION: true
+  DD_PROFILING_ENABLED: true
+  DD_TRACE_ENABLED: true
+  DD_TAGS: "app:query-ranking-api,country:corp,domain:search"
+  HOST: "0.0.0.0"
+
+datadog:
+  env: prod
+  service: "so-prod-query-ranking-api"
+
+gcp:
+  enabled: false
+
+workloadidentity:
+  enabled: true
+  k8ssvcacc: relevancy-sa

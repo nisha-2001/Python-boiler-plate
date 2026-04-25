@@ -1,0 +1,16 @@
+{{- if .Values.egress.enabled -}}
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: {{ template "name" . }}
+spec:
+  hosts:
+  {{- toYaml .Values.egress.hosts | nindent 2 }}
+  ports:
+  - number: 80
+    protocol: HTTP
+    name: http
+  - number: 443
+    protocol: HTTPS
+    name: https
+{{- end }}

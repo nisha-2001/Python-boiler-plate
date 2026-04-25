@@ -1,0 +1,14 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: mongodb-ranker
+spec:
+  hosts:
+  - mongodb.relevancy-es
+  addresses:
+  - 10.2.0.0/20
+  ports:
+  - name: mongo
+    number: 27017
+    protocol: TCP
+  location: MESH_EXTERNAL

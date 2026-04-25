@@ -1,0 +1,42 @@
+---
+repos:
+  - repo: https://github.com/psf/black
+    rev: 25.1.0
+    hooks:
+      - id: black
+        files: ^(src/|tests/|main.py)
+  - repo: https://github.com/pycqa/isort
+    rev: 6.0.1
+    hooks:
+      - id: isort
+        args: [ "--profile", "black", "--filter-files" ]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: requirements-txt-fixer
+      - id: pretty-format-json
+        args: ['--autofix', '--indent=4', '--no-ensure-ascii']
+        exclude: ^tests/
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest --cov=src --cov-config=.coveragerc --cov-report term
+        language: system
+        pass_filenames: false
+        types: [python]
+  - repo: https://github.com/pylint-dev/pylint
+    rev: v3.2.7
+    hooks:
+      - id: pylint
+        types:
+          - python
+        files: ^(tests/|src/|lemma_and_query_handler.py)
+        args:
+          - --rcfile=.pylintrc
+        additional_dependencies:
+          - pylint==3.2.7
+          - pytest
+          - fastapi
+          - asyncpg
+          - numpy==1.25.2
