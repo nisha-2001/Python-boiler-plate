@@ -1,0 +1,811 @@
+---
+default:
+  tags:
+    - catalyst-docker
+
+include:
+  - project: "digital-retail/ci-reuse/lint/markdown"
+    ref: master
+    file: ".gitlab-ci.yml"
+  - project: "digital-retail/ci-reuse/lint/yaml"
+    ref: master
+    file: ".gitlab-ci.yml"
+  - project: "digital-retail/ci-reuse/build/docker"
+    ref: master
+    file: ".gitlab-ci.yml"
+  - project: "digital-retail/ci-reuse/lint/helm"
+    ref: master
+    file: ".gitlab-ci.yml"
+  - project: "digital-retail/ci-reuse/deploy/wif/helm3"
+    file: ".gitlab-ci.yml"
+  - project: "digital-retail/ci-reuse/audit/sast"
+    ref: master
+    file: ".gitlab-ci.yml"
+
+variables:
+  YAMLLINT_INPUT: ".gitlab-ci.yml"
+  CI_PROJECT_NAME: "query-ranking-api"
+  HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}"
+  PROJECT_ID: ${GCP_PROJECT_ID}
+  QUALITY_GATE_ENABLED: ${QUALITY_GATE_ENABLED}
+  LANGUAGE: "python"
+
+pre_commit:
+  stage: lint
+  image: python:3.11-slim-bullseye
+  before_script:
+    - apt-get update -qy
+    - apt-get install -y curl git
+    - pip install --upgrade pip
+    - pip install virtualenv
+    - pip install pre-commit
+    - pip install pytest
+  script:
+    - pre-commit install
+    - pre-commit run black --all-files
+    - pre-commit run isort --all-files
+    - pre-commit run requirements-txt-fixer --all-files
+    - pre-commit run pretty-format-json --all-files
+    - pre-commit run pylint --all-files
+
+test:
+  stage: test
+  image: python:3.11-slim-bullseye
+  script:
+    - |
+      python -m venv venv
+      source venv/bin/activate
+      pip install -U pip
+      pip install -r requirements.txt
+      pip install pytest-cov
+      pytest tests/ --cov=src --cov-report=term-missing \
+      --cov-report=xml:coverage.xml --junitxml=reports/junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: reports/junit.xml
+    paths:
+      - coverage.xml
+  coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+%)$/'
+
+stages:
+  - lint
+  - test
+  - build
+  - audit
+  - deploy
+  - deploy-beta
+  - deploy-dev
+  - deploy-stage
+  - deploy-prod
+  - deploy-dr
+
+################################
+# environment: core-search-dev
+################################
+deploy_dev:
+  extends: .helm_deploy
+  stage: deploy-dev
+  environment:
+    name: dev
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+  when: manual
+
+
+################################
+# environment: core-search-dev
+################################
+deploy_dev_vs:
+  extends: .helm_deploy
+  stage: deploy-dev
+  environment:
+    name: dev
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=false
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=true
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.VERTEX_AI_EP_PATH=${VERTEX_AI_EP_PATH}
+      --set-string environmentVariables.PROJECT_ID_NUM=${GCP_PROJECT_ID_NUMERIC}
+      --set-string environmentVariables.GCP_REGION=${GCP_REGION}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+  when: manual
+
+################################
+# environment: falabella-search-staging
+################################
+deploy_falabella_staging:
+  extends: .helm_deploy
+  stage: deploy-stage
+  environment:
+    name: falabella-staging
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+    - llm_strategy_enbl
+  when: manual
+
+
+################################
+# environment: falabella-search-staging
+################################
+deploy_falabella_staging_vs:
+  extends: .helm_deploy
+  stage: deploy-stage
+  environment:
+    name: falabella-staging
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+  when: manual
+
+################################
+# environment: falabella-search-staging-cl
+################################
+deploy_falabella_staging_cl:
+  extends: .helm_deploy
+  stage: deploy-stage
+  environment:
+    name: falabella-staging-cl
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-cl
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-cl"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=true
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+  when: manual
+
+################################
+# environment: sodimac-search-staging
+################################
+deploy_sodimac_staging:
+  extends: .helm_deploy
+  stage: deploy-stage
+  environment:
+    name: sodimac-staging
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - master
+  when: manual
+
+################################
+# environment: prod
+################################
+deploy_prod:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+################################
+# environment: prod-vs
+################################
+deploy_prod_vs:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=false
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=true
+      --set-string environmentVariables.VERTEX_AI_EP_PATH=${VERTEX_AI_EP_PATH}
+      --set-string environmentVariables.PROJECT_ID_NUM=${GCP_PROJECT_ID_NUMERIC}
+      --set-string environmentVariables.GCP_REGION=${GCP_REGION}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod
+###############################
+deploy_falabella_prod:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: falabella-prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-cl
+###############################
+deploy_falabella_prod_cl:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: falabella-prod-cl
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-cl
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-cl"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: beta
+###############################
+deploy_beta:
+  extends: .helm_deploy
+  stage: deploy-beta
+  environment:
+    name: beta
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-beta
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-beta"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-dr-cl
+###############################
+deploy_falabella_prod_dr_cl:
+  extends: .helm_deploy
+  stage: deploy-dr
+  environment:
+    name: falabella-prod-dr-cl
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-cl
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-cl"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-co
+###############################
+deploy_falabella_prod_co:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: falabella-prod-co
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-co
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-co"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-pe
+###############################
+deploy_falabella_prod_pe:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: falabella-prod-pe
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-pe
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-pe"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-vs
+###############################
+deploy_falabella_prod_vs:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: falabella-prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=false
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=true
+      --set-string environmentVariables.VERTEX_AI_EP_PATH=${VERTEX_AI_EP_PATH}
+      --set-string environmentVariables.PROJECT_ID_NUM=${GCP_PROJECT_ID_NUMERIC}
+      --set-string environmentVariables.GCP_REGION=${GCP_REGION}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-dr-vs
+###############################
+deploy_falabella_prod_dr_vs:
+  extends: .helm_deploy
+  stage: deploy-dr
+  environment:
+    name: falabella-prod-dr
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=false
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=true
+      --set-string environmentVariables.IS_DR=true
+      --set-string environmentVariables.VERTEX_AI_EP_PATH=${VERTEX_AI_EP_PATH}
+      --set-string environmentVariables.PROJECT_ID_NUM=${GCP_PROJECT_ID_NUMERIC}
+      --set-string environmentVariables.GCP_REGION=${GCP_REGION}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --set-string environmentVariables.QUERY_PREPROCESS=false
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: sodimac-search-prod
+###############################
+deploy_sodimac_prod:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: sodimac-prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=false
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+################################
+# environment: sodimac-search-prod
+################################
+deploy_sodimac_prod_vs:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: sodimac-prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=false
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=true
+      --set-string environmentVariables.VERTEX_AI_EP_PATH=${VERTEX_AI_EP_PATH}
+      --set-string environmentVariables.PROJECT_ID_NUM=${COMMON_PROJECT_ID}
+      --set-string environmentVariables.GCP_REGION=${GCP_REGION}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+################################
+# environment: fazil-drb-prod | FAZIL PROD
+################################
+deploy_fazil_prod:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: fazil-prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=false
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+################################
+# environment: fazil-drb-prod | FAZIL PROD
+################################
+deploy_fazil_prod_vs:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: fazil-prod
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}-vs
+    HELM_PATH: "deployment/charts/${CI_PROJECT_NAME}-vs"
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=false
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=true
+      --set-string environmentVariables.VERTEX_AI_EP_PATH=${VERTEX_AI_EP_PATH}
+      --set-string environmentVariables.PROJECT_ID_NUM=${COMMON_PROJECT_ID}
+      --set-string environmentVariables.GCP_REGION=${GCP_REGION}
+      --set-string environmentVariables.VERTEX_AI_EP_ID=${VERTEX_AI_EP_ID}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: sodimac-search-prod-dr
+###############################
+deploy_sodimac_prod_dr:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: sodimac-prod-dr
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=true
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=false
+      --set-string environmentVariables.QUERY_PREPROCESS=false
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: falabella-search-prod-dr
+###############################
+deploy_falabella_prod_dr:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: falabella-prod-dr
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=true
+      --set-string environmentVariables.PROCESSOR_ENABLED=true
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.VS_ENABLED=false
+      --set-string environmentVariables.QUERY_PREPROCESS=false
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual
+
+###############################
+# environment: prod-dr
+###############################
+deploy_prod_dr:
+  extends: .helm_deploy
+  stage: deploy-prod
+  environment:
+    name: prod-dr
+  variables:
+    K8_CLUSTER_NAME: ${K8_CLUSTER_NAME}
+    K8_CLUSTER_REGION: ${K8_CLUSTER_REGION}
+    K8_NAMESPACE: ${K8_NAMESPACE}
+    HELM_RELEASE_NAME: ${CI_PROJECT_NAME}
+    HELM_OPTS: --set-string image.pullSecret.registry=${CI_REGISTRY}
+      --set-string image.pullSecret.username=${DEPLOY_TOKEN}
+      --set-string image.pullSecret.password=${DEPLOY_PASSWORD}
+      --set-string environmentVariables.GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      --set-string environmentVariables.LOGLEVEL=${LOGLEVEL}
+      --set-string environmentVariables.DB_ENABLED=${DB_ENABLED}
+      --set-string environmentVariables.VS_ENABLED=${VS_ENABLED}
+      --set-string environmentVariables.PROCESSOR_ENABLED=${PROCESSOR_ENABLED}
+      --set-string environmentVariables.MIN_POOL=${MIN_POOL}
+      --set-string environmentVariables.MAX_POOL=${MAX_POOL}
+      --set-string environmentVariables.QUERY_PREPROCESS=${QUERY_PREPROCESS}
+      --set-string environmentVariables.LLM_STRATEGY=${LLM_STRATEGY}
+      --values deployment/charts/config/values-${CI_ENVIRONMENT_NAME}.yaml
+  only:
+    - tags
+  when: manual

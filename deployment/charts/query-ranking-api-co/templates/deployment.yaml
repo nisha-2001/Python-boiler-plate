@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "name" . }}
+  labels:
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: helm
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+    meta.helm.sh/release-name: {{ template "name" . }}
+    tags.datadoghq.com/env: {{ .Values.datadog.env }}
+    tags.datadoghq.com/service: {{ .Values.datadog.service }}
+    tags.datadoghq.com/version: "v1.9.6"
+  annotations:
+    ad.datadoghq.com/currency-conversion.logs: '[{"source":"python"}]'
+    ad.datadoghq.com/tags: '"app":"query-ranking-api","role": "backend","sre_team":"drb-devops","team":"core-search","retention":"15D","country":"corp","bs-dom":"DRMB","bs-cap":"PROD","ind":"corp","cc-name":"browse","cc-id":"098006261"'
+
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      release: {{ template "name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-{{ .Values.image.tag }}
+        release: {{ template "name" . }}
+      annotations:
+        sidecar.istio.io/proxyCPU: 20m
+        sidecar.istio.io/proxyMemory: 50M
+    spec:
+{{- if .Values.image.pullSecret.enabled }}
+      imagePullSecrets:
+      - name: {{ template "name" . }}-registry-auth
+{{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          volumeMounts:
+            {{- if not .Values.workloadidentity.enabled }}
+            - name: gcp
+              mountPath: "/etc/gcp"
+              readOnly: true
+            {{- end }}
+          env:
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          {{- if .Values.gcp.enabled }}
+          {{- if not .Values.workloadidentity.enabled }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/etc/gcp/gcp_credentials.json"
+          {{- end }}
+          {{- end -}}
+          {{- if .Values.database.enabled }}
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: relevancy-db-secret
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: relevancy-db-secret
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: relevancy-db-secret
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: relevancy-db-secret
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: relevancy-db-secret
+                  key: DB_PASSWORD
+          {{- end -}}
+          {{- range $key, $value := .Values.environmentVariables }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.pod.initialDelaySeconds }}
+            periodSeconds: {{ .Values.pod.periodSeconds }}
+            timeoutSeconds: {{ .Values.pod.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /live
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.pod.initialDelaySeconds }}
+            periodSeconds: {{ .Values.pod.periodSeconds }}
+            timeoutSeconds: {{ .Values.pod.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        {{- if not .Values.workloadidentity.enabled }}
+        - name: gcp
+          secret:
+            secretName: {{ template "name" . }}-gcp-auth
+        {{- end }}
+      {{- if .Values.workloadidentity.enabled }}
+      serviceAccountName: {{ .Values.workloadidentity.k8ssvcacc }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
